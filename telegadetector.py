@@ -1,25 +1,14 @@
 # meta developer: @dev_angel_7553
-
+__version__ = (1, 1)
 from .. import loader, utils
 import requests
 import json
 import asyncio
+import io
 
 CALLS_BASE_URL = "https://calls.okcdn.ru"
 CALLS_API_KEY = "CHKIPMKGDIHBABABA"
 SESSION_DATA = '{"device_id":"telega_detector","version":2,"client_version":"android_8","client_type":"SDK_ANDROID"}'
-
-WARNING_MESSAGE = """привет.
-вижу, что ты используешь telega.
-
-у тебя есть два варианта:
-
-1. удаляешь его прямо сейчас и завершаешь сессию в настройках аккаунта.
-2. летишь в чс.
-
-почему — можешь ознакомиться здесь: dontusetelega.lol
-если коротко: это не клиент, а дыра, через которую утекает всё, включая переписки. обезопась себя и тех, с кем общаешься.
-"""
 
 @loader.tds
 class TelegaDetectorMod(loader.Module):
@@ -34,6 +23,8 @@ class TelegaDetectorMod(loader.Module):
         "sending_start": "<tg-emoji emoji-id=6025879072368761539>🎯</tg-emoji> <b>отправляю предупреждения...</b>",
         "sending_done": "<tg-emoji emoji-id=6021868492037298942>🛡</tg-emoji> <b>отправлено {sent} пользователям</b>\n<tg-emoji emoji-id=6019102674832595118>⚠️</tg-emoji> <b>не отправлено: {failed}</b>",
         "no_users": "<tg-emoji emoji-id=6021868492037298942>🛡</tg-emoji> <b>пользователи telega не найдены</b>",
+        "chat_checking": "<tg-emoji emoji-id=6025879072368761539>🎯</tg-emoji> <b>сканирую чат...</b>",
+        "chat_result": "<tg-emoji emoji-id=6019548599812103366>🛡</tg-emoji> <b>найдено в чате: {count}</b>",
     }
     
     strings_ru = {
@@ -45,6 +36,8 @@ class TelegaDetectorMod(loader.Module):
         "sending_start": "<tg-emoji emoji-id=6025879072368761539>🎯</tg-emoji> <b>отправляю предупреждения...</b>",
         "sending_done": "<tg-emoji emoji-id=6021868492037298942>🛡</tg-emoji> <b>отправлено {sent} пользователям</b>\n<tg-emoji emoji-id=6019102674832595118>⚠️</tg-emoji> <b>не отправлено: {failed}</b>",
         "no_users": "<tg-emoji emoji-id=6021868492037298942>🛡</tg-emoji> <b>пользователи telega не найдены</b>",
+        "chat_checking": "<tg-emoji emoji-id=6025879072368761539>🎯</tg-emoji> <b>сканирую чат...</b>",
+        "chat_result": "<tg-emoji emoji-id=6019548599812103366>🛡</tg-emoji> <b>найдено в чате: {count}</b>",
     }
     
     async def client_ready(self, client, db):
@@ -99,6 +92,13 @@ class TelegaDetectorMod(loader.Module):
                     users.append(dialog.entity.id)
         return list(set(users))
     
+    async def _get_chat_users(self, chat_id):
+        users = []
+        async for member in self._client.iter_participants(chat_id):
+            if not member.bot and not member.is_self:
+                users.append(member)
+        return users
+    
     async def _get_telega_users(self):
         all_users = await self._get_all_users()
         if not all_users:
@@ -116,6 +116,19 @@ class TelegaDetectorMod(loader.Module):
             await asyncio.sleep(0.3)
         return telega_users
         
+    async def _get_telega_chat_users(self, chat_users):
+        session_key = self._get_session_key()
+        if not session_key:
+            return []
+            
+        telega_users = []
+        
+        for user in chat_users:
+            if self._check_user(user.id, session_key):
+                telega_users.append(user)
+            await asyncio.sleep(0.3)
+        return telega_users
+    
     @loader.command(description="<tg-emoji emoji-id=6025879072368761539>🎯</tg-emoji> выявить пользователей telega")
     async def telega(self, message):
         """выявить пользователей telega"""
@@ -164,6 +177,59 @@ class TelegaDetectorMod(loader.Module):
                 message,
                 self.strings("sending_done").format(sent=sent, failed=failed)
             )
+            
+        except Exception as e:
+            await utils.answer(message, self.strings("error").format(error=str(e)))
+    
+    @loader.command(description="<tg-emoji emoji-id=6025879072368761539>👥</tg-emoji> проверить участников чата на telega")
+    async def telegachat(self, message):
+        """проверить участников чата на telega"""
+        args = utils.get_args_raw(message)
+        reply = await message.get_reply_message()
+        
+        if reply:
+            chat = reply.chat_id
+        elif args:
+            try:
+                chat = int(args)
+            except ValueError:
+                chat = args
+        else:
+            chat = message.chat_id
+            
+        await utils.answer(message, self.strings("chat_checking"))
+        
+        try:
+            chat_entity = await self._client.get_entity(chat)
+            chat_users = await self._get_chat_users(chat_entity.id)
+            
+            if not chat_users:
+                await utils.answer(message, self.strings("no_users"))
+                return
+                
+            telega_users = await self._get_telega_chat_users(chat_users)
+            
+            if not telega_users:
+                await utils.answer(message, self.strings("not_found"))
+                return
+                
+            result_text = ""
+            for user in telega_users:
+                name = (user.first_name or "") + (f" {user.last_name}" if user.last_name else "")
+                name = name.strip() or "No Name"
+                username = f"@{user.username}" if user.username else "@no_username"
+                result_text += f"{user.id} {name} {username}\n"
+            
+            file = io.BytesIO(result_text.encode("utf-8"))
+            file.name = "telega_users.txt"
+            
+            await message.client.send_file(
+                "me",
+                file,
+                caption=self.strings("chat_result").format(count=len(telega_users))
+            )
+            
+            await utils.answer(message, self.strings("chat_result").format(count=len(telega_users)))
             
         except Exception as e:
             await utils.answer(message, self.strings("error").format(error=str(e)))
