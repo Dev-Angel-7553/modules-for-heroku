@@ -32,6 +32,7 @@ class TonAnalyzer(loader.Module):
                 "api_key",
                 "",
                 "API ключ от @tonapibot.",
+                validator=loader.validators.Hidden(),
             )
         )
 
@@ -168,25 +169,19 @@ class TonAnalyzer(loader.Module):
             if in_val >= self.MIN_VAL:
                 usd = self.usd_str(in_val / 1e9, ton_price_usd)
                 src = (in_msg.get("source") or "—")[:16]
-                comment = ""
-                if in_msg.get("message"):
-                    comment = f"\n      💬 <i>{utils.escape_html(str(in_msg['message'])[:30])}</i>"
                 recent_lines.append(
                     f'  <tg-emoji emoji-id="5350700390847365132">⏬</tg-emoji> '
                     f"<code>+{in_val/1e9:.3f}</code> GRAM {usd}\n"
-                    f"      {dt} · <code>{src}</code>{comment}"
+                    f"      {dt} · <code>{src}</code>"
                 )
 
             if out_val >= self.MIN_VAL:
                 dst = (out_msgs[0].get("destination") or "—")[:16] if out_msgs else "—"
                 usd = self.usd_str(out_val / 1e9, ton_price_usd)
-                comment = ""
-                if out_msgs and out_msgs[0].get("message"):
-                    comment = f"\n      💬 <i>{utils.escape_html(str(out_msgs[0]['message'])[:30])}</i>"
                 recent_lines.append(
                     f'  <tg-emoji emoji-id="5350305520144106741">⏫</tg-emoji> '
                     f"<code>-{out_val/1e9:.3f}</code> GRAM {usd}\n"
-                    f"      {dt} · <code>{dst}</code>{comment}"
+                    f"      {dt} · <code>{dst}</code>"
                 )
 
         recent_block = "\n\n".join(recent_lines) if recent_lines else "  —"
@@ -216,4 +211,3 @@ class TonAnalyzer(loader.Module):
             f'<tg-emoji emoji-id="5350667865060043135">💼</tg-emoji> <b>Последние операции:</b>\n'
             f"<blockquote expandable>{recent_block}</blockquote>",
         )
-
