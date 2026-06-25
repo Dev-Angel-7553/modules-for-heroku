@@ -54,7 +54,7 @@ class TonAnalyzer(loader.Module):
             h["X-Api-Key"] = self.config["api_key"]
         return h
 
-    async def fetch_transactions(self, session, address: str, msg):
+    async def fetch_transactions(self, session, address: str, form):
         all_txs = []
         offset = 0
         while True:
@@ -74,10 +74,14 @@ class TonAnalyzer(loader.Module):
             if len(batch) < self.LIMIT:
                 break
             offset += len(batch)
-            await utils.answer(
-                msg,
-                f'<tg-emoji emoji-id="5350773074578916842">🙏</tg-emoji> '
-                f"<b>Загружено:</b> {len(all_txs)} транзакций...\n",
+            
+            # Меняем старое сообщение через form.edit() вместо повторного вызова self.inline.form
+            await form.edit(
+                text=(
+                    f'<tg-emoji emoji-id="5350773074578916842">🙏</tg-emoji> '
+                    f"<b>Загружено:</b> {len(all_txs)} транзакций...\n"
+                ),
+                reply_markup=[[{"text": "Закрыть", "action": "close", "style": "danger"}]]
             )
             await asyncio.sleep(0.15)
         return all_txs
@@ -98,33 +102,52 @@ class TonAnalyzer(loader.Module):
         """<адрес> — полный оборот GRAM кошелька"""
 
         if not self.config["api_key"]:
-            await utils.answer(message, self.strings_ru["no_key"])
+            await self.inline.form(
+                message=message,
+                text=self.strings_ru["no_key"],
+                reply_markup=[[{"text": "Закрыть", "action": "close", "style": "danger"}]]
+            )
             return
 
         address = utils.get_args_raw(message)
         if not address:
-            await utils.answer(message, self.strings_ru["no_addr"])
+            await self.inline.form(
+                message=message,
+                text=self.strings_ru["no_addr"],
+                reply_markup=[[{"text": "Закрыть", "action": "close", "style": "danger"}]]
+            )
             return
 
         address = address.strip()
-        msg = await utils.answer(
-            message,
-            f'<tg-emoji emoji-id="5350773074578916842">🙏</tg-emoji> <b>Загружаю...</b>\n'
-            f"<code>{address}</code>",
+        
+        # Создаем начальную инлайн-форму
+        form = await self.inline.form(
+            message=message,
+            text=(
+                f'<b>Загружаю транзакции...</b>\n'
+                f"<code>{address}</code>"
+            ),
+            reply_markup=[[{"text": "Закрыть", "action": "close", "style": "danger"}]]
         )
 
         try:
             async with aiohttp.ClientSession() as session:
                 all_txs, ton_price_usd = await asyncio.gather(
-                    self.fetch_transactions(session, address, msg),
+                    self.fetch_transactions(session, address, form),
                     self.fetch_ton_price(session),
                 )
         except Exception as e:
-            await utils.answer(msg, self.strings_ru["err"].format(utils.escape_html(str(e))))
+            await form.edit(
+                text=self.strings_ru["err"].format(utils.escape_html(str(e))),
+                reply_markup=[[{"text": "Закрыть", "action": "close", "style": "danger"}]]
+            )
             return
 
         if not all_txs:
-            await utils.answer(msg, self.strings_ru["not_found"])
+            await form.edit(
+                text=self.strings_ru["not_found"],
+                reply_markup=[[{"text": "Закрыть", "action": "close", "style": "danger"}]]
+            )
             return
 
         total_in = 0
@@ -192,22 +215,33 @@ class TonAnalyzer(loader.Module):
             if ton_price_usd > 0 else ""
         )
 
-        await utils.answer(
-            msg,
-            f'<tg-emoji emoji-id="5350613306090482956">📊</tg-emoji> <b>Статистика кошелька</b>\n'
-            f"<code>{address}</code>"
-            f"{price_line}\n\n"
-            f'<blockquote><tg-emoji emoji-id="5350700390847365132">⏬</tg-emoji> <b>Пришло:</b>\n'
-            f"  <code>+{ton_in:.4f}</code> GRAM  {self.usd_str(ton_in, ton_price_usd)}\n"
-            f"  ({count_in} транзакций)</blockquote>\n"
-            f'<blockquote><tg-emoji emoji-id="5350305520144106741">⏫</tg-emoji> <b>Ушло:</b>\n'
-            f"  <code>-{ton_out:.4f}</code> GRAM  {self.usd_str(ton_out, ton_price_usd)}\n"
-            f"  ({count_out} транзакций)</blockquote>\n"
-            f'<tg-emoji emoji-id="5280479668422610048">⚜️</tg-emoji> <b>Комиссии:</b>\n'
-            f"  <code>-{ton_fees:.4f}</code> GRAM  {self.usd_str(ton_fees, ton_price_usd)}\n\n"
-            f'<tg-emoji emoji-id="5350613306090482956">📊</tg-emoji> '
-            f"<b>Всего транзакций:</b> {len(all_txs)}"
-            f"\n\n"
-            f'<tg-emoji emoji-id="5350667865060043135">💼</tg-emoji> <b>Последние операции:</b>\n'
-            f"<blockquote expandable>{recent_block}</blockquote>",
+        # Выводим финальный результат в ту же самую форму
+        await form.edit(
+            text=(
+                f'<tg-emoji emoji-id="5350613306090482956">📊</tg-emoji> <b>Статистика кошелька</b>\n'
+                f"<code>{address}</code>"
+                f"{price_line}\n\n"
+                f'<blockquote><tg-emoji emoji-id="5350700390847365132">⏬</tg-emoji> <b>Пришло:</b>\n'
+                f"  <code>+{ton_in:.4f}</code> GRAM  {self.usd_str(ton_in, ton_price_usd)}\n"
+                f"  ({count_in} транзакций)</blockquote>\n"
+                f'<blockquote><tg-emoji emoji-id="5350305520144106741">⏫</tg-emoji> <b>Ушло:</b>\n'
+                f"  <code>-{ton_out:.4f}</code> GRAM  {self.usd_str(ton_out, ton_price_usd)}\n"
+                f"  ({count_out} транзакций)</blockquote>\n"
+                f'<tg-emoji emoji-id="5280479668422610048">⚜️</tg-emoji> <b>Комиссии:</b>\n'
+                f"  <code>-{ton_fees:.4f}</code> GRAM  {self.usd_str(ton_fees, ton_price_usd)}\n\n"
+                f'<tg-emoji emoji-id="5350613306090482956">📊</tg-emoji> '
+                f"<b>Всего транзакций:</b> {len(all_txs)}"
+                f"\n\n"
+                f'<tg-emoji emoji-id="5350667865060043135">💼</tg-emoji> <b>Последние операции:</b>\n'
+                f"<blockquote expandable>{recent_block}</blockquote>"
+            ),
+            reply_markup=[
+                [
+                    {
+                        "text": "Закрыть",
+                        "action": "close",
+                        "style": "danger",
+                    }
+                ]
+            ]
         )
